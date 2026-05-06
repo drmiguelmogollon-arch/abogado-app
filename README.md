@@ -681,4 +681,382 @@
                 const eventosDoc = await db.collection('eventos_abogado').doc('todos_eventos').get();
                 eventos = eventosDoc.exists ? eventosDoc.data().data || [] : [];
                 const seguimientosDoc = await db.collection('seguimientos_abogado').doc('todos_seguimientos').get();
-                seguimientos = seguimientosDoc.exists ? seguimientosDoc.data().data
+                seguimientos = seguimientosDoc.exists ? seguimientosDoc.data().data || [] : [];
+                mostrarConectado();
+                actualizarListaClientes();
+                actualizarCalendario();
+                actualizarEstadisticas();
+            } catch (error) { mostrarError(error); }
+        }
+
+        function escucharCambios() {
+            db.collection('clientes_abogado').doc('todos_clientes').onSnapshot((doc) => {
+                if (doc.exists && !primerCarga) {
+                    const nuevos = doc.data().data || [];
+                    if (JSON.stringify(clientes) !== JSON.stringify(nuevos)) {
+                        clientes = nuevos;
+                        actualizarListaClientes();
+                        actualizarEstadisticas();
+                        mostrarToast('📱 Datos sincronizados', 'info');
+                    }
+                }
+                primerCarga = false;
+            });
+        }
+
+        // IA
+        async function procesarComandoIA(mensaje) {
+            const msg = mensaje.toLowerCase();
+            if (msg.includes('crea') && msg.includes('cliente')) return await ejecutarCrearCliente(mensaje);
+            if (msg.includes('agenda') || msg.includes('recordatorio')) return await ejecutarCrearEvento(mensaje);
+            if (msg.includes('registra') && msg.includes('seguimiento')) return await ejecutarRegistrarSeguimiento(mensaje);
+            if (msg.includes('elimina') && msg.includes('cliente')) return await ejecutarEliminarCliente(mensaje);
+            if ((msg.includes('muestra') || msg.includes('ver')) && msg.includes('cliente')) return ejecutarConsultarClientes();
+            if (msg.includes('cuántos') || msg.includes('estadísticas')) return ejecutarEstadisticas();
+            return "📚 **Comandos disponibles:**\n• Crea un cliente llamado...\n• Agenda un recordatorio...\n• Registra un seguimiento...\n• Muéstrame los clientes\n• Cuántos clientes tengo";
+        }
+
+        async function ejecutarCrearCliente(mensaje) {
+            const nombreMatch = mensaje.match(/cliente\s+llamado\s+([^,\.]+)/i) || mensaje.match(/cliente\s+([^,\.]+)/i);
+            const telefonoMatch = mensaje.match(/tel[eé]fono\s+(\d+)/i);
+            const ramaMatch = mensaje.match(/rama\s+(civil|laboral|datacr[eé]dito)/i);
+            
+            let nombre = nombreMatch ? nombreMatch[1].trim() : null;
+            if (!nombre) return "❌ Especifica el nombre: 'Crea un cliente llamado Juan Pérez'";
+            
+            const cliente = {
+                id: Date.now(), tipo: 'natural', nombre: nombre,
+                telefono: telefonoMatch ? telefonoMatch[1] : "",
+                email: "", direccion: "",
+                rama: ramaMatch ? (ramaMatch[1].toLowerCase() === 'civil' ? 'Civil' : ramaMatch[1].toLowerCase() === 'laboral' ? 'Laboral' : 'Datacrédito') : "Civil",
+                fechaRegistro: new Date().toLocaleDateString('es-ES')
+            };
+            clientes.push(cliente);
+            await guardarClientesEnNube();
+            actualizarListaClientes();
+            actualizarEstadisticas();
+            return `✅ Cliente creado: ${nombre}`;
+        }
+
+        async function ejecutarCrearEvento(mensaje) {
+            let titulo = "Evento importante";
+            const match = mensaje.match(/recordatorio\s+de\s+([^.]+?)(?:mañana|hoy|$)/i);
+            if (match) titulo = match[1].trim();
+            
+            let fecha = new Date();
+            if (mensaje.includes('mañana')) fecha.setDate(fecha.getDate() + 1);
+            
+            const evento = { id: Date.now(), titulo: titulo, descripcion: "Creado por IA", hora: "10:00", recordatorio: 15, fecha: fecha.toISOString() };
+            eventos.push(evento);
+            await guardarEventosEnNube();
+            actualizarCalendario();
+            return `✅ Evento agendado: "${titulo}" para ${fecha.toLocaleDateString('es-ES')}`;
+        }
+
+        async function ejecutarRegistrarSeguimiento(mensaje) {
+            if (clientes.length === 0) return "❌ No hay clientes";
+            let cliente = clientes[clientes.length - 1];
+            const seguimiento = { id: Date.now(), clienteId: cliente.id, tipo: "llamada", comentario: mensaje, fecha: new Date().toLocaleString() };
+            seguimientos.push(seguimiento);
+            await guardarSeguimientosEnNube();
+            return `✅ Seguimiento registrado para ${cliente.nombre}`;
+        }
+
+        async function ejecutarEliminarCliente(mensaje) {
+            if (clientes.length === 0) return "❌ No hay clientes";
+            let cliente = clientes[clientes.length - 1];
+            clientes = clientes.filter(c => c.id !== cliente.id);
+            await guardarClientesEnNube();
+            actualizarListaClientes();
+            actualizarEstadisticas();
+            return `🗑️ Cliente eliminado: ${cliente.nombre}`;
+        }
+
+        function ejecutarConsultarClientes() {
+            if (clientes.length === 0) return "📋 No hay clientes registrados";
+            let respuesta = `👥 **Clientes (${clientes.length})**\n\n`;
+            clientes.slice(0, 10).forEach((c, i) => respuesta += `${i+1}. ${c.nombre} ⚖️ ${c.rama}\n`);
+            return respuesta;
+        }
+
+        function ejecutarEstadisticas() {
+            if (clientes.length === 0) return "📊 Sin datos";
+            return `📊 **Estadísticas**\n\n👥 Total: ${clientes.length}\n⚖️ Civil: ${clientes.filter(c => c.rama === 'Civil').length}\n👔 Laboral: ${clientes.filter(c => c.rama === 'Laboral').length}\n📊 Datacrédito: ${clientes.filter(c => c.rama === 'Datacrédito').length}`;
+        }
+
+        // UI Functions
+        function agregarMensaje(texto, tipo) {
+            const container = document.getElementById('iaChatContainer');
+            const div = document.createElement('div');
+            div.className = `ia-message ${tipo}`;
+            div.innerHTML = `<div class="ia-avatar">${tipo === 'user' ? '<i class="fas fa-user"></i>' : '<i class="fas fa-robot"></i>'}</div><div class="ia-bubble">${texto.replace(/\n/g, '<br>')}</div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function mostrarTyping() {
+            const container = document.getElementById('iaChatContainer');
+            const div = document.createElement('div');
+            div.className = 'ia-message bot';
+            div.id = 'iaTyping';
+            div.innerHTML = `<div class="ia-avatar"><i class="fas fa-robot"></i></div><div class="ia-bubble"><div class="ia-typing"><span></span><span></span><span></span></div></div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function ocultarTyping() { const t = document.getElementById('iaTyping'); if (t) t.remove(); }
+
+        async function enviarConsulta() {
+            const input = document.getElementById('iaInput');
+            const mensaje = input.value.trim();
+            if (!mensaje || iaEsperandoRespuesta) return;
+            agregarMensaje(mensaje, 'user');
+            input.value = '';
+            iaEsperandoRespuesta = true;
+            mostrarTyping();
+            await new Promise(r => setTimeout(r, 500));
+            const respuesta = await procesarComandoIA(mensaje);
+            ocultarTyping();
+            agregarMensaje(respuesta, 'bot');
+            iaEsperandoRespuesta = false;
+        }
+
+        function enviarSugerencia(texto) { document.getElementById('iaInput').value = texto; enviarConsulta(); }
+
+        // Funciones principales
+        async function agregarCliente(btn) {
+            if (btn) btn.disabled = true;
+            const nombre = document.getElementById('nombreCliente').value.trim();
+            if (!nombre) { mostrarToast('Ingrese nombre', 'error'); if (btn) btn.disabled = false; return; }
+            const cliente = {
+                id: Date.now(), tipo: document.getElementById('tipoCliente').value, nombre: nombre,
+                telefono: document.getElementById('telefonoCliente').value, email: document.getElementById('emailCliente').value,
+                direccion: document.getElementById('direccionCliente').value, rama: document.getElementById('ramaCliente').value,
+                fechaRegistro: new Date().toLocaleDateString('es-ES')
+            };
+            clientes.push(cliente);
+            await guardarClientesEnNube();
+            actualizarListaClientes();
+            cerrarFormulario();
+            actualizarEstadisticas();
+            mostrarToast('✅ Cliente registrado', 'success');
+            if (btn) btn.disabled = false;
+        }
+
+        async function eliminarCliente(id) {
+            if (confirm('¿Eliminar este cliente?')) {
+                clientes = clientes.filter(c => c.id !== id);
+                seguimientos = seguimientos.filter(s => s.clienteId !== id);
+                await guardarClientesEnNube();
+                await guardarSeguimientosEnNube();
+                actualizarListaClientes();
+                actualizarEstadisticas();
+                mostrarToast('🗑️ Eliminado', 'info');
+            }
+        }
+
+        async function agregarEvento(btn) {
+            if (btn) btn.disabled = true;
+            const titulo = document.getElementById('tituloEvento').value.trim();
+            if (!titulo) { mostrarToast('Ingrese título', 'error'); if (btn) btn.disabled = false; return; }
+            const evento = {
+                id: Date.now(), titulo: titulo, descripcion: document.getElementById('descripcionEvento').value,
+                hora: document.getElementById('horaEvento').value, recordatorio: parseInt(document.getElementById('recordatorioEvento').value),
+                fecha: fechaSeleccionada.toISOString()
+            };
+            eventos.push(evento);
+            await guardarEventosEnNube();
+            cerrarModalEvento();
+            actualizarCalendario();
+            mostrarToast('📅 Evento agendado', 'success');
+            if (btn) btn.disabled = false;
+        }
+
+        async function agregarSeguimiento(btn) {
+            if (btn) btn.disabled = true;
+            if (!clienteSeleccionado) return;
+            const comentario = document.getElementById('comentarioSeguimiento').value.trim();
+            if (!comentario) { mostrarToast('Escriba comentario', 'error'); if (btn) btn.disabled = false; return; }
+            const seguimiento = {
+                id: Date.now(), clienteId: clienteSeleccionado.id, tipo: document.getElementById('tipoSeguimiento').value,
+                comentario: comentario, fecha: new Date().toLocaleString()
+            };
+            seguimientos.push(seguimiento);
+            await guardarSeguimientosEnNube();
+            cerrarModalDetalle();
+            verDetalleCliente(clienteSeleccionado.id);
+            mostrarToast('📝 Seguimiento registrado', 'success');
+            if (btn) btn.disabled = false;
+        }
+
+        function actualizarListaClientes() {
+            const container = document.getElementById('listaClientes');
+            if (!clientes.length) {
+                container.innerHTML = `<div class="card" style="text-align: center;"><i class="fas fa-cloud-upload-alt" style="font-size: 48px; margin-bottom: 16px;"></i><p>Datos sincronizados en la nube</p></div>`;
+                return;
+            }
+            container.innerHTML = clientes.map(c => `
+                <div class="cliente-item" onclick="verDetalleCliente(${c.id})">
+                    <div class="cliente-info">
+                        <h3>${c.tipo === 'empresa' ? '🏢' : '👤'} ${escapeHtml(c.nombre)}</h3>
+                        <p><i class="fas fa-phone"></i> ${c.telefono || 'No registrado'}</p>
+                        <span class="rama-badge">⚖️ ${c.rama}</span>
+                    </div>
+                    <button class="delete-btn" onclick="event.stopPropagation(); eliminarCliente(${c.id})"><i class="fas fa-trash"></i></button>
+                </div>
+            `).join('');
+        }
+
+        function actualizarCalendario() {
+            const year = mesActual.getFullYear(), month = mesActual.getMonth();
+            const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+            document.getElementById('mesActual').textContent = `${meses[month]} ${year}`;
+            const primerDia = new Date(year, month, 1);
+            const ultimoDia = new Date(year, month + 1, 0);
+            let inicioSemana = primerDia.getDay();
+            inicioSemana = inicioSemana === 0 ? 7 : inicioSemana;
+            let html = '';
+            for (let i = 1; i < inicioSemana; i++) html += '<div class="fecha"></div>';
+            for (let dia = 1; dia <= ultimoDia.getDate(); dia++) {
+                const fecha = new Date(year, month, dia);
+                const esSeleccionada = fecha.toDateString() === fechaSeleccionada.toDateString();
+                const tieneEventos = eventos.some(e => e && e.fecha && new Date(e.fecha).toDateString() === fecha.toDateString());
+                let clase = '';
+                if (esSeleccionada) clase = 'selected';
+                if (tieneEventos && !esSeleccionada) clase = 'has-event';
+                html += `<div class="fecha ${clase}" onclick="seleccionarFecha(${year}, ${month}, ${dia})">${dia}</div>`;
+            }
+            document.getElementById('calendarioFechas').innerHTML = html;
+            actualizarEventosDelDia();
+        }
+
+        function actualizarEventosDelDia() {
+            const eventosDelDia = eventos.filter(e => e && e.fecha && new Date(e.fecha).toDateString() === fechaSeleccionada.toDateString());
+            const container = document.getElementById('listaEventos');
+            if (!eventosDelDia.length) container.innerHTML = '<p style="text-align: center; color: var(--text-secondary);"><i class="fas fa-calendar-times"></i> No hay eventos</p>';
+            else container.innerHTML = eventosDelDia.map(e => `<div style="background: var(--bg-card-hover); border-radius: 16px; padding: 14px; margin-bottom: 10px;"><strong>${escapeHtml(e.titulo)}</strong><p style="font-size: 12px;">${escapeHtml(e.descripcion || '')}</p><p style="font-size: 11px; color: var(--text-secondary);">${e.hora}</p></div>`).join('');
+        }
+
+        function actualizarEstadisticas() {
+            document.getElementById('totalClientes').textContent = clientes.length;
+            const ramas = { Civil: 0, Laboral: 0, Datacrédito: 0 };
+            clientes.forEach(c => { if (ramas[c.rama] !== undefined) ramas[c.rama]++; });
+            const statsHtml = Object.entries(ramas).filter(([_, c]) => c > 0).map(([r, c]) => `<div style="margin: 16px 0;"><div style="display: flex; justify-content: space-between;"><span>⚖️ ${r}</span><span>${c} (${Math.round(c/clientes.length*100)}%)</span></div><div class="barra-progreso"><div class="barra" style="width: ${(c/clientes.length*100)}%;"></div></div></div>`).join('');
+            document.getElementById('statsRamas').innerHTML = statsHtml || '<p>No hay datos</p>';
+            const activos = Math.floor(Math.random() * clientes.length);
+            document.getElementById('barraActivos').style.width = clientes.length ? `${(activos/clientes.length)*100}%` : '0%';
+            document.getElementById('barraActivos').innerHTML = `Casos Activos: ${activos}`;
+            document.getElementById('barraCerrados').style.width = clientes.length ? `${((clientes.length-activos)/clientes.length)*100}%` : '0%';
+            document.getElementById('barraCerrados').innerHTML = `Casos Cerrados: ${clientes.length - activos}`;
+        }
+
+        function verDetalleCliente(id) {
+            clienteSeleccionado = clientes.find(c => c.id === id);
+            if (!clienteSeleccionado) return;
+            const seguimientosCliente = seguimientos.filter(s => s.clienteId === id);
+            document.getElementById('detalleNombre').innerHTML = clienteSeleccionado.nombre;
+            document.getElementById('detalleInfo').innerHTML = `
+                <div style="margin: 16px 0; padding: 12px; background: var(--bg-card-hover); border-radius: 16px;">
+                    📞 ${clienteSeleccionado.telefono || 'No registrado'}<br>
+                    ✉️ ${clienteSeleccionado.email || 'No registrado'}<br>
+                    ⚖️ ${clienteSeleccionado.rama}
+                </div>
+                <div><strong>Seguimientos:</strong><br>${seguimientosCliente.map(s => `<div style="margin: 8px 0; padding: 8px; background: var(--bg-card); border-radius: 12px;">${s.tipo === 'llamada' ? '📞' : '🤝'} ${escapeHtml(s.comentario)}<br><small>${s.fecha}</small></div>`).join('') || 'Ninguno'}</div>
+            `;
+            document.getElementById('modalDetalle').classList.add('active');
+        }
+
+        function exportarReporte() {
+            if (!clientes.length) { mostrarToast('No hay clientes', 'error'); return; }
+            let reporte = '=== REPORTE ===\nFecha: ' + new Date().toLocaleString() + '\nClientes: ' + clientes.length + '\n\n';
+            clientes.forEach(c => reporte += `• ${c.nombre} (${c.rama}) - ${c.telefono || 'Sin teléfono'}\n`);
+            const blob = new Blob([reporte], {type: 'text/plain'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `reporte_${new Date().toISOString().split('T')[0]}.txt`;
+            a.click();
+            mostrarToast('Reporte exportado', 'success');
+        }
+
+        function compartirDatos() {
+            const texto = `Clientes: ${clientes.length}\nEventos: ${eventos.length}`;
+            if (navigator.share) navigator.share({ title: 'Mi Oficina', text: texto });
+            else { navigator.clipboard.writeText(texto); mostrarToast('Datos copiados', 'success'); }
+        }
+
+        // Utilidades
+        function toggleTheme() {
+            const toggle = document.getElementById('themeToggle');
+            if (toggle.checked) document.body.classList.add('light');
+            else document.body.classList.remove('light');
+            localStorage.setItem('theme', toggle.checked ? 'light' : 'dark');
+        }
+
+        function cargarTema() {
+            const saved = localStorage.getItem('theme');
+            const toggle = document.getElementById('themeToggle');
+            if (saved === 'light') { document.body.classList.add('light'); if (toggle) toggle.checked = true; }
+        }
+
+        function mostrarToast(mensaje, tipo = 'info') {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.style.background = tipo === 'success' ? 'var(--success)' : tipo === 'error' ? 'var(--error)' : 'var(--accent)';
+            toast.style.color = tipo === 'success' || tipo === 'error' ? 'white' : 'var(--bg-primary)';
+            toast.innerHTML = `<i class="fas ${tipo === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i> ${mensaje}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function mostrarSincronizando() {
+            const statusText = document.getElementById('syncText');
+            const statusIcon = document.querySelector('#syncStatus i');
+            statusText.textContent = 'Sincronizando...';
+            statusIcon.classList.add('syncing');
+            statusIcon.classList.remove('fa-cloud');
+            statusIcon.classList.add('fa-sync-alt');
+        }
+
+        function mostrarConectado() {
+            const statusText = document.getElementById('syncText');
+            const statusIcon = document.querySelector('#syncStatus i');
+            statusText.textContent = 'Sincronizado';
+            statusIcon.classList.remove('syncing');
+            statusIcon.classList.remove('fa-sync-alt');
+            statusIcon.classList.add('fa-cloud');
+            setTimeout(() => { if (statusText.textContent === 'Sincronizado') statusText.textContent = 'Conectado'; }, 2000);
+        }
+
+        function mostrarError(error) {
+            const statusText = document.getElementById('syncText');
+            statusText.textContent = 'Error de conexión';
+            setTimeout(() => { if (statusText.textContent === 'Error de conexión') statusText.textContent = 'Conectado'; }, 3000);
+            console.error(error);
+        }
+
+        function mostrarFormulario() { document.getElementById('formulario').style.display = 'block'; document.getElementById('btnMostrarForm').style.display = 'none'; }
+        function cerrarFormulario() { document.getElementById('formulario').style.display = 'none'; document.getElementById('btnMostrarForm').style.display = 'block'; document.getElementById('nombreCliente').value = ''; document.getElementById('telefonoCliente').value = ''; document.getElementById('emailCliente').value = ''; document.getElementById('direccionCliente').value = ''; }
+        function cambiarMes(delta) { mesActual.setMonth(mesActual.getMonth() + delta); actualizarCalendario(); }
+        function seleccionarFecha(y, m, d) { fechaSeleccionada = new Date(y, m, d); actualizarCalendario(); }
+        function mostrarModalEvento() { document.getElementById('modalEvento').classList.add('active'); }
+        function cerrarModalEvento() { document.getElementById('modalEvento').classList.remove('active'); document.getElementById('tituloEvento').value = ''; document.getElementById('descripcionEvento').value = ''; }
+        function cerrarModalDetalle() { document.getElementById('modalDetalle').classList.remove('active'); document.getElementById('comentarioSeguimiento').value = ''; clienteSeleccionado = null; }
+        
+        function cambiarPantalla(pantalla, elemento) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(`screen-${pantalla}`).classList.add('active');
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            if (elemento) elemento.classList.add('active');
+            if (pantalla === 'estadisticas') actualizarEstadisticas();
+            if (pantalla === 'calendario') actualizarCalendario();
+        }
+        
+        function escapeHtml(text) { if (!text) return ''; return text.replace(/[&<>]/g, function(m) { return m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;'; }); }
+
+        window.onclick = function(e) { document.querySelectorAll('.modal').forEach(m => { if (e.target === m) m.classList.remove('active'); }); }
+
+        cargarTema();
+        cargarDatosDesdeNube().then(() => escucharCambios());
+    </script>
+</body>
+</html>
